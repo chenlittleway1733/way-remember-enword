@@ -202,15 +202,15 @@ def show_card(row: pd.Series, index: int, total: int):
     .card {{
         box-sizing: border-box;
         width: 100%;
-        border: 1px solid #cfd8ca;
+        border: 1px solid #435143;
         border-radius: 14px;
         padding: 0.82rem 1.05rem;
-        background: #eef1e8;
-        color: #111111;
-        box-shadow: 0 1px 0 rgba(0,0,0,0.04);
+        background: #222821;
+        color: #d8ddd6;
+        box-shadow: 0 1px 0 rgba(0,0,0,0.12);
     }}
     .card-small {{
-        color: #66736b;
+        color: #9aa69c;
         font-size: 0.9rem;
         margin-bottom: 0.35rem;
     }}
@@ -221,7 +221,7 @@ def show_card(row: pd.Series, index: int, total: int):
         flex-wrap: wrap;
     }}
     .word-title {{
-        color: #20344a;
+        color: #c7d8e6;
         font-size: 2.2rem;
         font-weight: 850;
         line-height: 1.12;
@@ -231,24 +231,25 @@ def show_card(row: pd.Series, index: int, total: int):
         font-weight: 700;
         padding: 0.32rem 0.72rem;
         border-radius: 10px;
-        border: 1px solid #adbba7;
+        border: 1px solid #5b725b;
         cursor: pointer;
-        background: #dde7d8;
-        color: #20344a;
+        background: #314336;
+        color: #dce8de;
     }}
     .speak-button:hover {{
-        background: #d1decb;
+        background: #3a4f40;
     }}
     .meaning-line {{
-        color: #2f3b35;
+        color: #d6d2c4;
         font-size: 1.08rem;
         margin-top: 0.5rem;
     }}
     .pos {{
         display: inline-block;
         font-weight: 850;
-        color: #6f4b15;
-        background: #ead9b5;
+        color: #e1c27a;
+        background: #3e3420;
+        border: 1px solid #6d5b33;
         border-radius: 7px;
         padding: 0.08rem 0.38rem;
         margin-right: 0.5rem;
@@ -306,16 +307,16 @@ st.markdown(
     """
     <style>
     :root {
-        --soft-card: #eef1e8;
-        --soft-card-2: #e9eee7;
-        --soft-line: #cfd8ca;
-        --word-color: #20344a;
-        --pos-color: #6f4b15;
-        --zh-color: #2f3b35;
-        --en-example: #1f4f69;
-        --zh-example: #52625a;
-        --status-c2e: #80541d;
-        --status-e2c: #286050;
+        --soft-card: #222821;
+        --soft-card-2: #20261f;
+        --soft-line: #3d4a3c;
+        --word-color: #c7d8e6;
+        --pos-color: #e1c27a;
+        --zh-color: #d6d2c4;
+        --en-example: #a8c7d8;
+        --zh-example: #b9c3b7;
+        --status-c2e: #d6b36a;
+        --status-e2c: #8fc4a7;
     }
 
     .main-title {
@@ -325,35 +326,35 @@ st.markdown(
     }
 
     .sub-title {
-        color: #9ca3af;
+        color: #8f9694;
         margin-bottom: 1rem;
     }
 
     .section-title {
-        font-size: 1.35rem;
+        font-size: 1.18rem;
         font-weight: 800;
-        margin-top: 1.1rem;
-        margin-bottom: 0.55rem;
-        color: #e5e7eb;
+        margin-top: 1rem;
+        margin-bottom: 0.45rem;
+        color: #c9d0cb;
     }
 
     .example-box {
-        border-left: 5px solid #9db5a3;
+        border-left: 4px solid #5f8063;
         border-radius: 8px;
         padding: 0.52rem 0.8rem;
         margin-bottom: 0.52rem;
         background: var(--soft-card);
-        color: #111111;
+        color: #d8ddd6;
     }
 
     .example-en {
-        font-size: 1.03rem;
+        font-size: 1.02rem;
         font-weight: 700;
         color: var(--en-example);
     }
 
     .example-zh {
-        font-size: 0.96rem;
+        font-size: 0.95rem;
         color: var(--zh-example);
         margin-top: 0.2rem;
     }
@@ -363,8 +364,8 @@ st.markdown(
         border-radius: 10px;
         padding: 0.58rem 0.85rem;
         background: var(--soft-card-2);
-        color: #111111;
-        font-size: 0.98rem;
+        color: #d8ddd6;
+        font-size: 0.97rem;
         line-height: 1.7;
     }
 
@@ -378,15 +379,15 @@ st.markdown(
         font-weight: 800;
     }
 
-    /* 左側多選標籤：降低紅色刺激感 */
+    /* 左側多選標籤：低彩度灰綠，避免紅色刺激 */
     div[data-baseweb="tag"] {
-        background-color: #586b5b !important;
-        color: #f5f7f2 !important;
+        background-color: #3d5743 !important;
+        color: #e7eee8 !important;
         border-radius: 8px !important;
     }
 
     div[data-baseweb="tag"] span {
-        color: #f5f7f2 !important;
+        color: #e7eee8 !important;
     }
 
     /* 上方按鈕文字盡量不換行 */
