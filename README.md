@@ -1,1 +1,68 @@
-# way-remember-enword
+# 國中背單字系統｜第一階段
+
+## 檔案說明
+
+- `app.py`：Streamlit 主程式
+- `words.csv`：單字主檔範例
+- `requirements.txt`：安裝套件
+
+## 執行方式
+
+```bash
+pip install -r requirements.txt
+streamlit run app.py
+```
+
+## 第一階段功能
+
+- 左側選年級 / 學期 / 單元
+- 國一先修不分學期，直接選單元
+- 單元可複選
+- 右側顯示單字卡
+- 顯示英文、詞性、中文、例句
+- 瀏覽器 TTS 發音
+- 上一張 / 下一張 / 隨機
+
+## words.csv 欄位
+
+| 欄位 | 說明 |
+|---|---|
+| word_id | 單字唯一編號 |
+| grade | 國一先修 / 國一 / 國二 / 國三 |
+| semester | 國一先修留空；其他填上學期 / 下學期 |
+| unit_id | 單元代碼 |
+| unit_name | 單元名稱 |
+| word_order | 單字排序 |
+| word | 英文單字 |
+| part_of_speech | 詞性 |
+| chinese | 中文意思 |
+| example_1_en | 例句 1 英文 |
+| example_1_zh | 例句 1 中文 |
+| example_2_en | 例句 2 英文 |
+| example_2_zh | 例句 2 中文 |
+| example_3_en | 例句 3 英文 |
+| example_3_zh | 例句 3 中文 |
+
+
+---
+
+## 本版更新
+
+已整合「國一先修 Unit 1～Unit 6」單字資料。
+
+- Unit 1：29 筆
+- Unit 2：36 筆
+- Unit 3：38 筆
+- Unit 4：39 筆
+- Unit 5：41 筆
+- Unit 6：34 筆
+
+合計：217 筆單字／片語。
+
+國一先修資料規則：
+
+```text
+grade = 國一先修
+semester = 留空
+unit_id = PRE_U1～PRE_U6
+```
