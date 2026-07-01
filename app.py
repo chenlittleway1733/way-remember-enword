@@ -99,6 +99,46 @@ def normalize_answer(text: str) -> str:
     return text
 
 
+POS_ZH_MAP = {
+    "n.": "名詞",
+    "v.": "動詞",
+    "adj.": "形容詞",
+    "adv.": "副詞",
+    "prep.": "介系詞",
+    "conj.": "連接詞",
+    "pron.": "代名詞",
+    "aux.": "助動詞",
+    "interj.": "感嘆詞",
+    "phrase": "片語",
+    "sentence": "句子",
+}
+
+
+def pos_with_chinese(pos_text: str) -> str:
+    """
+    將詞性顯示為「英文 / 中文」。
+    例如：
+    adj. -> adj. / 形容詞
+    n. / adj. -> n. / 名詞；adj. / 形容詞
+    """
+    pos_text = str(pos_text).strip()
+    if not pos_text:
+        return ""
+
+    parts = [p.strip() for p in re.split(r"/|；|;", pos_text) if p.strip()]
+    display_parts = []
+
+    for part in parts:
+        zh = POS_ZH_MAP.get(part)
+        if zh:
+            display_parts.append(f"{part} / {zh}")
+        else:
+            display_parts.append(part)
+
+    return "；".join(display_parts)
+
+
+
 @st.cache_data
 def load_words(path: str) -> pd.DataFrame:
     file_path = Path(path)
@@ -302,7 +342,7 @@ def reset_card_index_if_filter_changed(signature: str):
 def show_word_card(row: pd.Series, index: int, total: int):
     word_raw = row["word"]
     word = escape(word_raw)
-    pos = escape(row["part_of_speech"])
+    pos = escape(pos_with_chinese(row["part_of_speech"]))
     chinese = escape(row["chinese"])
     word_json = json.dumps(word_raw, ensure_ascii=False)
 
@@ -715,7 +755,7 @@ def show_c2e_quiz(row: pd.Series):
     st.markdown(
         f"""
         <div class="quiz-question">
-            <span class="quiz-pos">{escape(row['part_of_speech'])}</span>
+            <span class="quiz-pos">{escape(pos_with_chinese(row['part_of_speech']))}</span>
             <span class="quiz-chinese">{escape(row['chinese'])}</span>
         </div>
         """,
@@ -788,7 +828,7 @@ def show_e2c_quiz(row: pd.Series):
         st.markdown(
             f"""
             <div class="answer-box">
-                <span class="quiz-pos">{escape(row['part_of_speech'])}</span>
+                <span class="quiz-pos">{escape(pos_with_chinese(row['part_of_speech']))}</span>
                 <span class="quiz-chinese">{escape(row['chinese'])}</span>
             </div>
             """,
@@ -861,6 +901,14 @@ st.markdown(
     .sub-title {
         color: #8f9694;
         margin-bottom: 1rem;
+    }
+
+    .footer-note {
+        color: #7f8784;
+        font-size: 0.9rem;
+        margin-top: 1.2rem;
+        padding-top: 0.75rem;
+        border-top: 1px solid #273027;
     }
 
     .section-title {
@@ -1094,11 +1142,6 @@ base_signature = f"{mode}|{selected_grade}|{selected_semester}|{','.join(selecte
 reset_card_index_if_filter_changed(base_signature)
 
 st.markdown('<div class="main-title">國中背單字系統｜第三階段</div>', unsafe_allow_html=True)
-st.markdown(
-    '<div class="sub-title">目前功能：記憶卡、熟練度統計、精熟字卡隱藏、學習狀況上傳 / 下載、中翻英與英翻中測驗。</div>',
-    unsafe_allow_html=True,
-)
-
 if filtered.empty:
     st.warning("目前選擇範圍沒有單字。")
     st.stop()
@@ -1173,9 +1216,10 @@ if mode == "記憶模式":
                     "e2c_level",
                 ]
             ].assign(
+                詞性=lambda x: x["part_of_speech"].apply(pos_with_chinese),
                 中翻英=lambda x: x["c2e_level"].apply(level_text),
                 英翻中=lambda x: x["e2c_level"].apply(level_text),
-            ).drop(columns=["c2e_level", "e2c_level"]),
+            ).drop(columns=["part_of_speech", "c2e_level", "e2c_level"]),
             use_container_width=True,
             hide_index=True,
         )
@@ -1254,7 +1298,15 @@ else:
                 "e2c_level",
             ]
         ].copy()
+        display_df["詞性"] = display_df["part_of_speech"].apply(pos_with_chinese)
         display_df["中翻英"] = display_df["c2e_level"].apply(level_text)
         display_df["英翻中"] = display_df["e2c_level"].apply(level_text)
-        display_df = display_df.drop(columns=["c2e_level", "e2c_level"])
+        display_df = display_df.drop(columns=["part_of_speech", "c2e_level", "e2c_level"])
         st.dataframe(display_df, use_container_width=True, hide_index=True)
+
+
+st.markdown(
+    '<div class="footer-note">目前功能：記憶卡、熟練度統計、精熟字卡隱藏、學習狀況上傳 / 下載、中翻英與英翻中測驗。</div>',
+    unsafe_allow_html=True,
+)
+
