@@ -51,6 +51,23 @@ LEVEL_LABELS = {
     4: "精熟",
 }
 
+QUIZ_LEVEL_WEIGHTS = {
+    0: 100,  # 未記憶
+    1: 70,   # 不熟
+    2: 50,   # 有點熟
+    3: 30,   # 很熟
+    4: 10,   # 精熟；只有勾選「精熟單字也列入出題」時才使用
+}
+
+
+def quiz_weight_by_level(level, include_mastered: bool) -> int:
+    """依熟練度決定測驗抽題權重。"""
+    level = normalize_level(level)
+    if level == 4 and not include_mastered:
+        return 0
+    return QUIZ_LEVEL_WEIGHTS.get(level, 100)
+
+
 PROGRESS_COLUMNS = [
     "word_id",
     "c2e_level",
@@ -579,10 +596,37 @@ def show_status(word_id: str):
     )
 
 
+def show_sidebar_status(word_id: str):
+    progress_row = get_progress_row(word_id)
+
+    c2e = level_text(progress_row.get("c2e_level", 0))
+    e2c = level_text(progress_row.get("e2c_level", 0))
+    c2e_correct = int(progress_row.get("c2e_correct", 0))
+    c2e_wrong = int(progress_row.get("c2e_wrong", 0))
+    e2c_correct = int(progress_row.get("e2c_correct", 0))
+    e2c_wrong = int(progress_row.get("e2c_wrong", 0))
+
+    st.sidebar.markdown("### 記憶狀況")
+    st.sidebar.markdown(
+        f"""
+        <div class="sidebar-status-box">
+            <div>
+                <span class="status-c2e">中翻英</span>：{c2e}<br>
+                <span class="sidebar-status-count">答對 {c2e_correct}｜答錯 {c2e_wrong}</span>
+            </div>
+            <div style="margin-top:0.45rem;">
+                <span class="status-e2c">英翻中</span>：{e2c}<br>
+                <span class="sidebar-status-count">答對 {e2c_correct}｜答錯 {e2c_wrong}</span>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def show_memory_card(row: pd.Series, index: int, total: int):
     show_word_card(row, index, total)
     show_examples(row)
-    show_status(row["word_id"])
 
 
 def show_speak_button_inline(text: str, button_label="🔊 發音", height=46):
@@ -648,7 +692,11 @@ def pick_quiz_word(candidate_df: pd.DataFrame):
         st.session_state.quiz_word_id = None
         return
 
-    row = candidate_df.sample(1).iloc[0]
+    if "quiz_weight" in candidate_df.columns and candidate_df["quiz_weight"].sum() > 0:
+        row = candidate_df.sample(1, weights="quiz_weight").iloc[0]
+    else:
+        row = candidate_df.sample(1).iloc[0]
+
     st.session_state.quiz_word_id = row["word_id"]
     st.session_state.quiz_answered = False
     st.session_state.quiz_result = None
@@ -707,7 +755,7 @@ def level_count_text(series: pd.Series) -> str:
     return "｜".join([f"{LEVEL_LABELS[level]} {int(counts.get(level, 0))}" for level in order])
 
 
-def show_range_progress_summary(filtered_df: pd.DataFrame):
+def show_range_progress_summary(filtered_df: pd.DataFrame, in_sidebar: bool = False):
     """顯示目前選擇範圍的學習狀況統計。"""
     merged = attach_progress(filtered_df)
 
@@ -715,28 +763,32 @@ def show_range_progress_summary(filtered_df: pd.DataFrame):
     e2c_summary = level_count_text(merged["e2c_level"])
     both_mastered = int(merged["both_mastered"].sum())
 
-    st.markdown(
-        f"""
-        <div class="range-summary">
-            <div><span class="range-title">目前學習狀況</span></div>
-            <div><span class="status-c2e">中翻英</span>：{c2e_summary}</div>
-            <div><span class="status-e2c">英翻中</span>：{e2c_summary}</div>
-            <div><span class="range-note">雙向都精熟：{both_mastered} 個</span></div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    html = f"""
+    <div class="range-summary">
+        <div><span class="range-title">目前學習狀況</span></div>
+        <div><span class="status-c2e">中翻英</span>：{c2e_summary}</div>
+        <div><span class="status-e2c">英翻中</span>：{e2c_summary}</div>
+        <div><span class="range-note">雙向都精熟：{both_mastered} 個</span></div>
+    </div>
+    """
+
+    if in_sidebar:
+        st.sidebar.markdown(html, unsafe_allow_html=True)
+    else:
+        st.markdown(html, unsafe_allow_html=True)
 
 
 
 def build_quiz_candidates(filtered_df: pd.DataFrame, direction: str, include_mastered: bool) -> pd.DataFrame:
     merged = attach_progress(filtered_df)
 
-    if not include_mastered:
-        if direction == "c2e":
-            merged = merged[merged["c2e_level"] < 4]
-        else:
-            merged = merged[merged["e2c_level"] < 4]
+    level_col = "c2e_level" if direction == "c2e" else "e2c_level"
+    merged["quiz_weight"] = merged[level_col].apply(
+        lambda level: quiz_weight_by_level(level, include_mastered)
+    )
+
+    # 未勾選精熟時，精熟字權重為 0，因此排除。
+    merged = merged[merged["quiz_weight"] > 0]
 
     return merged.reset_index(drop=True)
 
@@ -808,7 +860,6 @@ def show_c2e_quiz(row: pd.Series):
             st.session_state.force_next_question = True
             st.rerun()
 
-    show_status(row["word_id"])
 
 
 def show_e2c_quiz(row: pd.Series):
@@ -863,7 +914,6 @@ def show_e2c_quiz(row: pd.Series):
                 st.session_state.force_next_question = True
                 st.rerun()
 
-    show_status(row["word_id"])
 
 
 # ============================================================
@@ -909,6 +959,23 @@ st.markdown(
         margin-top: 1.2rem;
         padding-top: 0.75rem;
         border-top: 1px solid #273027;
+    }
+
+    .sidebar-status-box {
+        border: 1px solid #314033;
+        border-radius: 10px;
+        padding: 0.65rem 0.8rem;
+        background: #1c221c;
+        color: #c9d0cb;
+        font-size: 0.95rem;
+        line-height: 1.6;
+        margin-top: 0.2rem;
+        margin-bottom: 0.2rem;
+    }
+
+    .sidebar-status-count {
+        color: #8f9694;
+        font-size: 0.83rem;
     }
 
     .section-title {
@@ -1124,13 +1191,21 @@ if not unit_options:
     st.sidebar.error("目前選擇範圍內沒有單元資料。")
     st.stop()
 
+ALL_UNITS_LABEL = "全部單元"
+unit_labels_with_all = unit_labels + [ALL_UNITS_LABEL]
+
+default_unit_selection = [unit_labels[0]] if unit_labels else []
+
 selected_unit_labels = st.sidebar.multiselect(
     "單元，可複選",
-    unit_labels,
-    default=unit_labels,
+    unit_labels_with_all,
+    default=default_unit_selection,
 )
 
-selected_unit_ids = [label_to_unit_id[label] for label in selected_unit_labels]
+if ALL_UNITS_LABEL in selected_unit_labels:
+    selected_unit_ids = [unit_id for _, unit_id in unit_options]
+else:
+    selected_unit_ids = [label_to_unit_id[label] for label in selected_unit_labels if label in label_to_unit_id]
 
 if not selected_unit_ids:
     st.warning("請先在左側選擇至少一個單元。")
@@ -1163,7 +1238,8 @@ if mode == "記憶模式":
     memory_df = build_memory_cards(filtered, hide_mastered_cards)
 
     if memory_df.empty:
-        show_range_progress_summary(filtered)
+        st.sidebar.divider()
+        show_range_progress_summary(filtered, in_sidebar=True)
         st.success("目前沒有可顯示的字卡。若要查看精熟字卡，請取消勾選「精熟字卡不顯示」。")
         st.stop()
 
@@ -1194,9 +1270,12 @@ if mode == "記憶模式":
         else:
             st.caption(f"目前選擇範圍共有 {len(filtered)} 個單字；顯示 {len(memory_df)} 個")
 
-    show_range_progress_summary(filtered)
-
     current_row = memory_df.iloc[st.session_state.card_index]
+
+    st.sidebar.divider()
+    show_sidebar_status(current_row["word_id"])
+    show_range_progress_summary(filtered, in_sidebar=True)
+
     show_memory_card(current_row, st.session_state.card_index, len(memory_df))
 
     with st.expander("查看目前選擇範圍的單字表"):
@@ -1230,19 +1309,28 @@ if mode == "記憶模式":
 # ============================================================
 
 else:
-    st.sidebar.divider()
-    st.sidebar.subheader("測驗設定")
+    st.markdown('<div class="section-title">測驗設定</div>', unsafe_allow_html=True)
 
-    quiz_direction_label = st.sidebar.radio(
-        "測驗方向",
-        ["中翻英", "英翻中"],
-        index=0,
-    )
+    quiz_setting_cols = st.columns([1.4, 1.2, 3.4])
 
-    include_mastered = st.sidebar.checkbox(
-        "精熟單字也列入出題",
-        value=False,
-    )
+    with quiz_setting_cols[0]:
+        quiz_direction_label = st.radio(
+            "測驗方向",
+            ["中翻英", "英翻中"],
+            index=0,
+            horizontal=True,
+            key="quiz_direction_main",
+        )
+
+    with quiz_setting_cols[1]:
+        include_mastered = st.checkbox(
+            "精熟單字也列入出題",
+            value=False,
+            key="include_mastered_main",
+        )
+
+    with quiz_setting_cols[2]:
+        st.caption("中翻英會自動判斷答案；英翻中會先公布答案，再由學生自評答對或答錯。")
 
     direction = "c2e" if quiz_direction_label == "中翻英" else "e2c"
 
@@ -1265,6 +1353,10 @@ else:
         f"可出題：{len(candidate_df)} 個。"
         + (" 已包含精熟單字。" if include_mastered else " 精熟單字預設不出題。")
     )
+    st.caption(
+        "出題權重：未記憶 100｜不熟 70｜有點熟 50｜很熟 30"
+        + ("｜精熟 10" if include_mastered else "｜精熟 0")
+    )
 
     if candidate_df.empty:
         st.success("目前沒有可出題單字。可以勾選「精熟單字也列入出題」，或改選其他單元。")
@@ -1279,6 +1371,10 @@ else:
     if current_quiz_row is None:
         st.warning("暫時找不到題目，請重新整理頁面。")
         st.stop()
+
+    st.sidebar.divider()
+    show_sidebar_status(current_quiz_row["word_id"])
+    show_range_progress_summary(filtered, in_sidebar=True)
 
     if direction == "c2e":
         show_c2e_quiz(current_quiz_row)
@@ -1296,12 +1392,14 @@ else:
                 "chinese",
                 "c2e_level",
                 "e2c_level",
+                "quiz_weight",
             ]
         ].copy()
         display_df["詞性"] = display_df["part_of_speech"].apply(pos_with_chinese)
         display_df["中翻英"] = display_df["c2e_level"].apply(level_text)
         display_df["英翻中"] = display_df["e2c_level"].apply(level_text)
-        display_df = display_df.drop(columns=["part_of_speech", "c2e_level", "e2c_level"])
+        display_df["出題權重"] = display_df["quiz_weight"]
+        display_df = display_df.drop(columns=["part_of_speech", "c2e_level", "e2c_level", "quiz_weight"])
         st.dataframe(display_df, use_container_width=True, hide_index=True)
 
 
