@@ -1126,7 +1126,7 @@ st.sidebar.title("📘 背單字系統")
 
 mode = st.sidebar.radio(
     "模式",
-    ["記憶模式", "測驗模式"],
+    ["記憶模式", "測驗模式-英翻中", "測驗模式-中翻英"],
     index=0,
 )
 
@@ -1309,30 +1309,23 @@ if mode == "記憶模式":
 # ============================================================
 
 else:
-    st.markdown('<div class="section-title">測驗設定</div>', unsafe_allow_html=True)
+    if mode == "測驗模式-中翻英":
+        direction = "c2e"
+        quiz_direction_label = "中翻英"
+    else:
+        direction = "e2c"
+        quiz_direction_label = "英翻中"
 
-    quiz_setting_cols = st.columns([1.4, 1.2, 3.4])
-
-    with quiz_setting_cols[0]:
-        quiz_direction_label = st.radio(
-            "測驗方向",
-            ["中翻英", "英翻中"],
-            index=0,
-            horizontal=True,
-            key="quiz_direction_main",
-        )
-
-    with quiz_setting_cols[1]:
-        include_mastered = st.checkbox(
-            "精熟單字也列入出題",
-            value=False,
-            key="include_mastered_main",
-        )
-
-    with quiz_setting_cols[2]:
-        st.caption("中翻英會自動判斷答案；英翻中會先公布答案，再由學生自評答對或答錯。")
-
-    direction = "c2e" if quiz_direction_label == "中翻英" else "e2c"
+    st.sidebar.divider()
+    st.sidebar.subheader("測驗設定")
+    include_mastered = st.sidebar.checkbox(
+        "精熟單字也列入出題",
+        value=False,
+        key="include_mastered_sidebar",
+    )
+    st.sidebar.caption(
+        "中翻英會自動判斷答案；英翻中會先公布答案，再由學生自評答對或答錯。"
+    )
 
     candidate_df = build_quiz_candidates(filtered, direction, include_mastered)
 
@@ -1348,6 +1341,10 @@ else:
 
     ensure_quiz_word(candidate_df, quiz_signature)
 
+    st.markdown(
+        f'<div class="section-title">目前模式：測驗模式－{quiz_direction_label}</div>',
+        unsafe_allow_html=True,
+    )
     st.caption(
         f"目前測驗範圍：{len(filtered)} 個單字；"
         f"可出題：{len(candidate_df)} 個。"
@@ -1404,7 +1401,7 @@ else:
 
 
 st.markdown(
-    '<div class="footer-note">目前功能：記憶卡、熟練度統計、精熟字卡隱藏、學習狀況上傳 / 下載、中翻英與英翻中測驗。</div>',
+    '<div class="footer-note">目前功能：記憶卡、熟練度統計、精熟字卡隱藏、學習狀況上傳 / 下載、左側測驗模式切換。</div>',
     unsafe_allow_html=True,
 )
 
