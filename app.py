@@ -202,57 +202,63 @@ def show_card(row: pd.Series, index: int, total: int):
     .card {{
         box-sizing: border-box;
         width: 100%;
-        border: 1px solid #e2e2e2;
+        border: 1px solid #cfd8ca;
         border-radius: 14px;
-        padding: 0.9rem 1.2rem;
-        background: #ffffff;
+        padding: 0.82rem 1.05rem;
+        background: #eef1e8;
         color: #111111;
+        box-shadow: 0 1px 0 rgba(0,0,0,0.04);
     }}
     .card-small {{
-        color: #777777;
-        font-size: 0.95rem;
-        margin-bottom: 0.45rem;
+        color: #66736b;
+        font-size: 0.9rem;
+        margin-bottom: 0.35rem;
     }}
     .word-row {{
         display: flex;
         align-items: center;
-        gap: 0.8rem;
+        gap: 0.75rem;
         flex-wrap: wrap;
     }}
     .word-title {{
-        color: #111111;
-        font-size: 2.35rem;
-        font-weight: 800;
+        color: #20344a;
+        font-size: 2.2rem;
+        font-weight: 850;
         line-height: 1.12;
     }}
     .speak-button {{
-        font-size: 1rem;
-        font-weight: 650;
-        padding: 0.35rem 0.75rem;
+        font-size: 0.95rem;
+        font-weight: 700;
+        padding: 0.32rem 0.72rem;
         border-radius: 10px;
-        border: 1px solid #cfcfcf;
+        border: 1px solid #adbba7;
         cursor: pointer;
-        background: #f8f8f8;
-        color: #111111;
+        background: #dde7d8;
+        color: #20344a;
     }}
     .speak-button:hover {{
-        background: #eeeeee;
+        background: #d1decb;
     }}
     .meaning-line {{
-        color: #222222;
-        font-size: 1.15rem;
-        margin-top: 0.55rem;
+        color: #2f3b35;
+        font-size: 1.08rem;
+        margin-top: 0.5rem;
     }}
     .pos {{
-        font-weight: 800;
+        display: inline-block;
+        font-weight: 850;
+        color: #6f4b15;
+        background: #ead9b5;
+        border-radius: 7px;
+        padding: 0.08rem 0.38rem;
         margin-right: 0.5rem;
     }}
     </style>
     """
 
-    components.html(card_html, height=150)
+    components.html(card_html, height=132)
 
-    st.markdown("### 例句")
+    st.markdown('<div class="section-title">例句</div>', unsafe_allow_html=True)
 
     has_example = False
     for i in range(1, 4):
@@ -274,12 +280,12 @@ def show_card(row: pd.Series, index: int, total: int):
     if not has_example:
         st.info("這個單字目前還沒有例句。")
 
-    st.markdown("### 記憶狀況")
+    st.markdown('<div class="section-title">記憶狀況</div>', unsafe_allow_html=True)
     st.markdown(
         """
         <div class="status-box">
-            中翻英：未記憶<br>
-            英翻中：未記憶
+            <span class="status-c2e">中翻英</span>：未記憶<br>
+            <span class="status-e2c">英翻中</span>：未記憶
         </div>
         """,
         unsafe_allow_html=True,
@@ -299,39 +305,93 @@ st.set_page_config(
 st.markdown(
     """
     <style>
+    :root {
+        --soft-card: #eef1e8;
+        --soft-card-2: #e9eee7;
+        --soft-line: #cfd8ca;
+        --word-color: #20344a;
+        --pos-color: #6f4b15;
+        --zh-color: #2f3b35;
+        --en-example: #1f4f69;
+        --zh-example: #52625a;
+        --status-c2e: #80541d;
+        --status-e2c: #286050;
+    }
+
     .main-title {
         font-size: 2rem;
         font-weight: 800;
         margin-bottom: 0.25rem;
     }
+
     .sub-title {
-        color: #666;
+        color: #9ca3af;
         margin-bottom: 1rem;
     }
-    .example-box {
-        border-left: 5px solid #ddd;
-        padding: 0.55rem 0.8rem;
+
+    .section-title {
+        font-size: 1.35rem;
+        font-weight: 800;
+        margin-top: 1.1rem;
         margin-bottom: 0.55rem;
-        background: #ffffff;
+        color: #e5e7eb;
+    }
+
+    .example-box {
+        border-left: 5px solid #9db5a3;
+        border-radius: 8px;
+        padding: 0.52rem 0.8rem;
+        margin-bottom: 0.52rem;
+        background: var(--soft-card);
         color: #111111;
     }
+
     .example-en {
-        font-size: 1.05rem;
-        font-weight: 650;
-        color: #111111;
+        font-size: 1.03rem;
+        font-weight: 700;
+        color: var(--en-example);
     }
+
     .example-zh {
-        font-size: 0.98rem;
-        color: #555555;
+        font-size: 0.96rem;
+        color: var(--zh-example);
         margin-top: 0.2rem;
     }
+
     .status-box {
-        border: 1px dashed #cfcfcf;
+        border: 1px solid var(--soft-line);
         border-radius: 10px;
-        padding: 0.6rem 0.85rem;
-        background: #ffffff;
+        padding: 0.58rem 0.85rem;
+        background: var(--soft-card-2);
         color: #111111;
-        font-size: 1rem;
+        font-size: 0.98rem;
+        line-height: 1.7;
+    }
+
+    .status-c2e {
+        color: var(--status-c2e);
+        font-weight: 800;
+    }
+
+    .status-e2c {
+        color: var(--status-e2c);
+        font-weight: 800;
+    }
+
+    /* 左側多選標籤：降低紅色刺激感 */
+    div[data-baseweb="tag"] {
+        background-color: #586b5b !important;
+        color: #f5f7f2 !important;
+        border-radius: 8px !important;
+    }
+
+    div[data-baseweb="tag"] span {
+        color: #f5f7f2 !important;
+    }
+
+    /* 上方按鈕文字盡量不換行 */
+    div.stButton > button {
+        white-space: nowrap;
     }
     </style>
     """,
@@ -427,7 +487,7 @@ if filtered.empty:
 if st.session_state.card_index >= len(filtered):
     st.session_state.card_index = 0
 
-control_cols = st.columns([1, 1, 1, 4])
+control_cols = st.columns([1.15, 1.15, 1.05, 4.2])
 
 with control_cols[0]:
     if st.button("⬅ 上一張", use_container_width=True):
