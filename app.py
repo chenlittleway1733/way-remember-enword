@@ -1130,6 +1130,16 @@ mode = st.sidebar.radio(
     index=0,
 )
 
+if mode != "記憶模式":
+    include_mastered = st.sidebar.checkbox(
+        "精熟單字也列入出題",
+        value=False,
+        key="include_mastered_sidebar",
+    )
+    st.sidebar.caption(
+        "中翻英會自動判斷答案；英翻中會先公布答案，再由學生自評答對或答錯。"
+    )
+
 st.sidebar.divider()
 st.sidebar.subheader("學習狀況")
 
@@ -1315,17 +1325,6 @@ else:
     else:
         direction = "e2c"
         quiz_direction_label = "英翻中"
-
-    st.sidebar.divider()
-    st.sidebar.subheader("測驗設定")
-    include_mastered = st.sidebar.checkbox(
-        "精熟單字也列入出題",
-        value=False,
-        key="include_mastered_sidebar",
-    )
-    st.sidebar.caption(
-        "中翻英會自動判斷答案；英翻中會先公布答案，再由學生自評答對或答錯。"
-    )
 
     candidate_df = build_quiz_candidates(filtered, direction, include_mastered)
 
