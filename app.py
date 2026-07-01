@@ -1,5 +1,7 @@
 import json
 import random
+import re
+from datetime import datetime
 from pathlib import Path
 from html import escape
 
@@ -9,18 +11,13 @@ import streamlit.components.v1 as components
 
 
 # ============================================================
-# 國中背單字網頁軟體｜第一階段
-# 功能：
-# 1. 讀取 words.csv
-# 2. 左側選年級 / 學期 / 單元
-# 3. 右側顯示單字卡
-# 4. 上一張 / 下一張 / 隨機
-# 5. 瀏覽器 TTS 發音
-#
-# 尚未加入：
-# - 學習狀況 CSV
-# - 測驗模式
-# - 熟練度升降
+# 國中背單字網頁軟體
+# 第三階段：
+# 1. 記憶卡模式
+# 2. 學習狀況 CSV 上傳 / 下載
+# 3. 測驗模式：中翻英、英翻中
+# 4. 答對熟練度 +1，答錯熟練度 -1
+# 5. 精熟單字預設不出題，可勾選列入
 # ============================================================
 
 WORDS_FILE = "words.csv"
@@ -46,18 +43,64 @@ REQUIRED_COLUMNS = [
 GRADE_ORDER = ["國一先修", "國一", "國二", "國三"]
 SEMESTER_ORDER = ["上學期", "下學期"]
 
+LEVEL_LABELS = {
+    0: "未記憶",
+    1: "不熟",
+    2: "有點熟",
+    3: "很熟",
+    4: "精熟",
+}
+
+PROGRESS_COLUMNS = [
+    "word_id",
+    "c2e_level",
+    "e2c_level",
+    "c2e_correct",
+    "c2e_wrong",
+    "e2c_correct",
+    "e2c_wrong",
+    "last_reviewed",
+]
+
+
+# ============================================================
+# 基礎工具
+# ============================================================
 
 def safe_int(value, default=9999):
-    """把排序欄位轉成整數；失敗時放到後面。"""
     try:
         return int(value)
     except Exception:
         return default
 
 
+def normalize_level(value):
+    try:
+        value = int(value)
+    except Exception:
+        value = 0
+    return max(0, min(4, value))
+
+
+def level_text(value):
+    return LEVEL_LABELS.get(normalize_level(value), "未記憶")
+
+
+def normalize_answer(text: str) -> str:
+    """
+    中翻英答案判斷用。
+    原則：不處理同義字，只比對本題指定單字。
+    但會忽略大小寫、前後空白、多餘空格與句尾 .!?。
+    """
+    text = str(text).strip().lower()
+    text = text.replace("’", "'").replace("‘", "'")
+    text = re.sub(r"\s+", " ", text)
+    text = text.strip("。．.?!？！ ")
+    return text
+
+
 @st.cache_data
 def load_words(path: str) -> pd.DataFrame:
-    """讀取單字 CSV。"""
     file_path = Path(path)
     if not file_path.exists():
         st.error(f"找不到 {path}，請把 words.csv 放在 app.py 同一個資料夾。")
@@ -70,11 +113,9 @@ def load_words(path: str) -> pd.DataFrame:
         st.error("words.csv 缺少欄位：" + "、".join(missing))
         st.stop()
 
-    # 清理空白
     for col in REQUIRED_COLUMNS:
         df[col] = df[col].astype(str).str.strip()
 
-    # 排序
     df["_grade_order"] = df["grade"].apply(
         lambda x: GRADE_ORDER.index(x) if x in GRADE_ORDER else 999
     )
@@ -91,63 +132,159 @@ def load_words(path: str) -> pd.DataFrame:
     return df
 
 
-def speak_button(text: str, label: str = "🔊 發音"):
-    """
-    使用瀏覽器內建 speechSynthesis 發音。
-    注意：這是第一階段簡易作法，使用 Streamlit components 嵌入 HTML/JS。
-    """
-    text_json = json.dumps(text, ensure_ascii=False)
+def create_default_progress(words_df: pd.DataFrame) -> pd.DataFrame:
+    return pd.DataFrame({
+        "word_id": words_df["word_id"].astype(str),
+        "c2e_level": 0,
+        "e2c_level": 0,
+        "c2e_correct": 0,
+        "c2e_wrong": 0,
+        "e2c_correct": 0,
+        "e2c_wrong": 0,
+        "last_reviewed": "",
+    })
 
-    html = f"""
-    <button
-        onclick="speakWord()"
-        style="
-            font-size: 16px;
-            padding: 0.45rem 0.8rem;
-            border-radius: 8px;
-            border: 1px solid #ddd;
-            cursor: pointer;
-            background: #ffffff;
-        "
-    >
-        {label}
-    </button>
 
-    <script>
-    function speakWord() {{
-        const text = {text_json};
-        window.speechSynthesis.cancel();
-        const msg = new SpeechSynthesisUtterance(text);
-        msg.lang = "en-US";
-        msg.rate = 0.85;
-        msg.pitch = 1.0;
-        window.speechSynthesis.speak(msg);
-    }}
-    </script>
+def prepare_progress(uploaded_file, words_df: pd.DataFrame) -> pd.DataFrame:
+    default_progress = create_default_progress(words_df)
+
+    if uploaded_file is None:
+        progress = default_progress.copy()
+    else:
+        try:
+            progress = pd.read_csv(uploaded_file, dtype=str).fillna("")
+        except Exception:
+            st.sidebar.error("學習狀況檔案讀取失敗，已改用全新進度。")
+            progress = default_progress.copy()
+
+    for col in PROGRESS_COLUMNS:
+        if col not in progress.columns:
+            progress[col] = ""
+
+    progress = progress[PROGRESS_COLUMNS].copy()
+    progress["word_id"] = progress["word_id"].astype(str).str.strip()
+    progress = progress.drop_duplicates(subset=["word_id"], keep="last")
+
+    # 以目前 words.csv 為主，舊進度檔缺少的新單字自動補入
+    merged = default_progress[["word_id"]].merge(progress, on="word_id", how="left")
+
+    for col in PROGRESS_COLUMNS:
+        if col == "word_id":
+            continue
+        if col not in merged.columns:
+            merged[col] = default_progress[col]
+
+    numeric_cols = [
+        "c2e_level", "e2c_level",
+        "c2e_correct", "c2e_wrong",
+        "e2c_correct", "e2c_wrong",
+    ]
+
+    for col in numeric_cols:
+        merged[col] = pd.to_numeric(merged[col], errors="coerce").fillna(0).astype(int)
+
+    merged["c2e_level"] = merged["c2e_level"].apply(normalize_level)
+    merged["e2c_level"] = merged["e2c_level"].apply(normalize_level)
+    merged["last_reviewed"] = merged["last_reviewed"].astype(str).replace("nan", "")
+
+    return merged[PROGRESS_COLUMNS].copy()
+
+
+def progress_to_csv_bytes(progress_df: pd.DataFrame) -> bytes:
+    return progress_df[PROGRESS_COLUMNS].to_csv(index=False).encode("utf-8-sig")
+
+
+def upload_signature(uploaded_file):
+    if uploaded_file is None:
+        return "__no_upload__"
+    return f"{uploaded_file.name}_{uploaded_file.size}"
+
+
+def init_or_load_progress(uploaded_file, words_df: pd.DataFrame):
+    sig = upload_signature(uploaded_file)
+
+    if "progress_df" not in st.session_state:
+        st.session_state.progress_df = prepare_progress(uploaded_file, words_df)
+        st.session_state.progress_upload_signature = sig
+
+    # 有新上傳檔時，才重新讀取；避免測驗更新後 rerun 被重設
+    if sig != st.session_state.get("progress_upload_signature"):
+        st.session_state.progress_df = prepare_progress(uploaded_file, words_df)
+        st.session_state.progress_upload_signature = sig
+
+
+def get_progress_row(word_id: str) -> dict:
+    progress_df = st.session_state.progress_df
+    matched = progress_df[progress_df["word_id"] == word_id]
+    if matched.empty:
+        return {
+            "c2e_level": 0,
+            "e2c_level": 0,
+            "c2e_correct": 0,
+            "c2e_wrong": 0,
+            "e2c_correct": 0,
+            "e2c_wrong": 0,
+            "last_reviewed": "",
+        }
+    return matched.iloc[0].to_dict()
+
+
+def update_progress(word_id: str, direction: str, is_correct: bool):
     """
-    components.html(html, height=45)
+    direction:
+    - c2e: 中翻英
+    - e2c: 英翻中
+    """
+    progress_df = st.session_state.progress_df
+
+    if word_id not in set(progress_df["word_id"]):
+        new_row = {
+            "word_id": word_id,
+            "c2e_level": 0,
+            "e2c_level": 0,
+            "c2e_correct": 0,
+            "c2e_wrong": 0,
+            "e2c_correct": 0,
+            "e2c_wrong": 0,
+            "last_reviewed": "",
+        }
+        progress_df = pd.concat([progress_df, pd.DataFrame([new_row])], ignore_index=True)
+
+    idx = progress_df.index[progress_df["word_id"] == word_id][0]
+
+    if direction == "c2e":
+        level_col = "c2e_level"
+        correct_col = "c2e_correct"
+        wrong_col = "c2e_wrong"
+    else:
+        level_col = "e2c_level"
+        correct_col = "e2c_correct"
+        wrong_col = "e2c_wrong"
+
+    old_level = normalize_level(progress_df.at[idx, level_col])
+
+    if is_correct:
+        progress_df.at[idx, level_col] = min(4, old_level + 1)
+        progress_df.at[idx, correct_col] = int(progress_df.at[idx, correct_col]) + 1
+    else:
+        progress_df.at[idx, level_col] = max(0, old_level - 1)
+        progress_df.at[idx, wrong_col] = int(progress_df.at[idx, wrong_col]) + 1
+
+    progress_df.at[idx, "last_reviewed"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    st.session_state.progress_df = progress_df[PROGRESS_COLUMNS].copy()
 
 
 def get_unit_options(df: pd.DataFrame):
-    """回傳單元選項：[(顯示文字, unit_id), ...]。"""
     units = (
         df[["unit_id", "unit_name"]]
         .drop_duplicates()
         .sort_values(by=["unit_id", "unit_name"], kind="stable")
     )
-
-    options = []
-    for _, row in units.iterrows():
-        unit_id = row["unit_id"]
-        unit_name = row["unit_name"]
-        label = f"{unit_id}｜{unit_name}"
-        options.append((label, unit_id))
-
-    return options
+    return [(f"{row['unit_id']}｜{row['unit_name']}", row["unit_id"]) for _, row in units.iterrows()]
 
 
 def reset_card_index_if_filter_changed(signature: str):
-    """如果左側選擇條件改變，重設目前卡片位置。"""
     if "filter_signature" not in st.session_state:
         st.session_state.filter_signature = signature
         st.session_state.card_index = 0
@@ -155,17 +292,20 @@ def reset_card_index_if_filter_changed(signature: str):
     if st.session_state.filter_signature != signature:
         st.session_state.filter_signature = signature
         st.session_state.card_index = 0
+        reset_quiz_state()
 
 
-def show_card(row: pd.Series, index: int, total: int):
-    """顯示右側單字卡。"""
+# ============================================================
+# TTS / HTML 顯示
+# ============================================================
+
+def show_word_card(row: pd.Series, index: int, total: int):
     word_raw = row["word"]
     word = escape(word_raw)
     pos = escape(row["part_of_speech"])
     chinese = escape(row["chinese"])
     word_json = json.dumps(word_raw, ensure_ascii=False)
 
-    # 用 components.html 做單字卡，才能把瀏覽器 TTS 按鈕放在英文單字右邊。
     card_html = f"""
     <div class="card">
         <div class="card-small">第 {index + 1} / {total} 張</div>
@@ -259,13 +399,14 @@ def show_card(row: pd.Series, index: int, total: int):
 
     components.html(card_html, height=132)
 
+
+def show_examples(row: pd.Series):
     st.markdown('<div class="section-title">例句</div>', unsafe_allow_html=True)
 
     examples = []
     for i in range(1, 4):
         en_raw = row.get(f"example_{i}_en", "")
         zh_raw = row.get(f"example_{i}_zh", "")
-
         if en_raw or zh_raw:
             examples.append({
                 "en_raw": en_raw,
@@ -273,112 +414,363 @@ def show_card(row: pd.Series, index: int, total: int):
                 "zh": escape(zh_raw),
             })
 
-    if examples:
-        example_items_html = ""
-        for ex in examples:
-            en_json = json.dumps(ex["en_raw"], ensure_ascii=False)
-            example_items_html += f"""
-            <div class="example-box">
-                <div class="example-row">
-                    <button class="example-speak-button" onclick='speakExample({en_json})'>🔊</button>
-                    <div class="example-text">
-                        <div class="example-en">{ex["en"]}</div>
-                        <div class="example-zh">{ex["zh"]}</div>
-                    </div>
+    if not examples:
+        st.info("這個單字目前還沒有例句。")
+        return
+
+    example_items_html = ""
+    for ex in examples:
+        en_json = json.dumps(ex["en_raw"], ensure_ascii=False)
+        example_items_html += f"""
+        <div class="example-box">
+            <div class="example-row">
+                <button class="example-speak-button" onclick='speakExample({en_json})'>🔊</button>
+                <div class="example-text">
+                    <div class="example-en">{ex["en"]}</div>
+                    <div class="example-zh">{ex["zh"]}</div>
                 </div>
             </div>
-            """
-
-        examples_height = 88 * len(examples) + 12
-
-        examples_html = f"""
-        <div class="examples-wrap">
-            {example_items_html}
         </div>
-
-        <script>
-        function speakExample(text) {{
-            window.speechSynthesis.cancel();
-            const msg = new SpeechSynthesisUtterance(text);
-            msg.lang = "en-US";
-            msg.rate = 0.82;
-            msg.pitch = 1.0;
-            window.speechSynthesis.speak(msg);
-        }}
-        </script>
-
-        <style>
-        body {{
-            margin: 0;
-            background: transparent;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        }}
-        .examples-wrap {{
-            width: 100%;
-            box-sizing: border-box;
-        }}
-        .example-box {{
-            box-sizing: border-box;
-            width: 100%;
-            border-left: 4px solid #5f8063;
-            border-radius: 8px;
-            padding: 0.48rem 0.72rem;
-            margin-bottom: 0.52rem;
-            background: #222821;
-            color: #d8ddd6;
-        }}
-        .example-row {{
-            display: flex;
-            align-items: flex-start;
-            gap: 0.62rem;
-        }}
-        .example-speak-button {{
-            flex: 0 0 auto;
-            margin-top: 0.02rem;
-            font-size: 0.92rem;
-            font-weight: 700;
-            line-height: 1;
-            padding: 0.34rem 0.43rem;
-            border-radius: 9px;
-            border: 1px solid #5b725b;
-            cursor: pointer;
-            background: #314336;
-            color: #dce8de;
-        }}
-        .example-speak-button:hover {{
-            background: #3a4f40;
-        }}
-        .example-text {{
-            min-width: 0;
-        }}
-        .example-en {{
-            font-size: 1.02rem;
-            font-weight: 700;
-            color: #a8c7d8;
-            line-height: 1.35;
-        }}
-        .example-zh {{
-            font-size: 0.95rem;
-            color: #b9c3b7;
-            margin-top: 0.18rem;
-            line-height: 1.35;
-        }}
-        </style>
         """
-        components.html(examples_html, height=examples_height)
-    else:
-        st.info("這個單字目前還沒有例句。")
 
-    st.markdown('<div class="section-title">記憶狀況</div>', unsafe_allow_html=True)
+    examples_height = 88 * len(examples) + 12
+    examples_html = f"""
+    <div class="examples-wrap">
+        {example_items_html}
+    </div>
+
+    <script>
+    function speakExample(text) {{
+        window.speechSynthesis.cancel();
+        const msg = new SpeechSynthesisUtterance(text);
+        msg.lang = "en-US";
+        msg.rate = 0.82;
+        msg.pitch = 1.0;
+        window.speechSynthesis.speak(msg);
+    }}
+    </script>
+
+    <style>
+    body {{
+        margin: 0;
+        background: transparent;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }}
+    .examples-wrap {{
+        width: 100%;
+        box-sizing: border-box;
+    }}
+    .example-box {{
+        box-sizing: border-box;
+        width: 100%;
+        border-left: 4px solid #5f8063;
+        border-radius: 8px;
+        padding: 0.48rem 0.72rem;
+        margin-bottom: 0.52rem;
+        background: #222821;
+        color: #d8ddd6;
+    }}
+    .example-row {{
+        display: flex;
+        align-items: flex-start;
+        gap: 0.62rem;
+    }}
+    .example-speak-button {{
+        flex: 0 0 auto;
+        margin-top: 0.02rem;
+        font-size: 0.92rem;
+        font-weight: 700;
+        line-height: 1;
+        padding: 0.34rem 0.43rem;
+        border-radius: 9px;
+        border: 1px solid #5b725b;
+        cursor: pointer;
+        background: #314336;
+        color: #dce8de;
+    }}
+    .example-speak-button:hover {{
+        background: #3a4f40;
+    }}
+    .example-text {{
+        min-width: 0;
+    }}
+    .example-en {{
+        font-size: 1.02rem;
+        font-weight: 700;
+        color: #a8c7d8;
+        line-height: 1.35;
+    }}
+    .example-zh {{
+        font-size: 0.95rem;
+        color: #b9c3b7;
+        margin-top: 0.18rem;
+        line-height: 1.35;
+    }}
+    </style>
+    """
+    components.html(examples_html, height=examples_height)
+
+
+def show_status(word_id: str):
+    progress_row = get_progress_row(word_id)
+
+    c2e = level_text(progress_row.get("c2e_level", 0))
+    e2c = level_text(progress_row.get("e2c_level", 0))
+    c2e_correct = int(progress_row.get("c2e_correct", 0))
+    c2e_wrong = int(progress_row.get("c2e_wrong", 0))
+    e2c_correct = int(progress_row.get("e2c_correct", 0))
+    e2c_wrong = int(progress_row.get("e2c_wrong", 0))
+
+    st.markdown('<div class="section-title compact-title">記憶狀況</div>', unsafe_allow_html=True)
     st.markdown(
-        """
+        f"""
         <div class="status-box">
-            <span class="status-c2e">中翻英</span>：未記憶<br>
-            <span class="status-e2c">英翻中</span>：未記憶
+            <div>
+                <span class="status-c2e">中翻英</span>：{c2e}
+                <span class="status-count">答對 {c2e_correct}｜答錯 {c2e_wrong}</span>
+            </div>
+            <div>
+                <span class="status-e2c">英翻中</span>：{e2c}
+                <span class="status-count">答對 {e2c_correct}｜答錯 {e2c_wrong}</span>
+            </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
+
+
+def show_memory_card(row: pd.Series, index: int, total: int):
+    show_word_card(row, index, total)
+    show_examples(row)
+    show_status(row["word_id"])
+
+
+def show_speak_button_inline(text: str, button_label="🔊 發音", height=46):
+    text_json = json.dumps(text, ensure_ascii=False)
+    html = f"""
+    <button class="inline-speak" onclick="speakText()">{button_label}</button>
+
+    <script>
+    function speakText() {{
+        const text = {text_json};
+        window.speechSynthesis.cancel();
+        const msg = new SpeechSynthesisUtterance(text);
+        msg.lang = "en-US";
+        msg.rate = 0.85;
+        msg.pitch = 1.0;
+        window.speechSynthesis.speak(msg);
+    }}
+    </script>
+
+    <style>
+    body {{
+        margin: 0;
+        background: transparent;
+    }}
+    .inline-speak {{
+        font-size: 0.96rem;
+        font-weight: 700;
+        padding: 0.34rem 0.72rem;
+        border-radius: 10px;
+        border: 1px solid #5b725b;
+        cursor: pointer;
+        background: #314336;
+        color: #dce8de;
+    }}
+    .inline-speak:hover {{
+        background: #3a4f40;
+    }}
+    </style>
+    """
+    components.html(html, height=height)
+
+
+# ============================================================
+# 測驗模式
+# ============================================================
+
+def reset_quiz_state():
+    for key in [
+        "quiz_word_id",
+        "quiz_signature",
+        "quiz_answered",
+        "quiz_result",
+        "quiz_show_answer",
+        "quiz_last_answer",
+        "quiz_nonce",
+    ]:
+        if key in st.session_state:
+            del st.session_state[key]
+
+
+def pick_quiz_word(candidate_df: pd.DataFrame):
+    if candidate_df.empty:
+        st.session_state.quiz_word_id = None
+        return
+
+    row = candidate_df.sample(1).iloc[0]
+    st.session_state.quiz_word_id = row["word_id"]
+    st.session_state.quiz_answered = False
+    st.session_state.quiz_result = None
+    st.session_state.quiz_show_answer = False
+    st.session_state.quiz_last_answer = ""
+    st.session_state.quiz_nonce = st.session_state.get("quiz_nonce", 0) + 1
+
+
+def ensure_quiz_word(candidate_df: pd.DataFrame, signature: str):
+    if st.session_state.get("quiz_signature") != signature:
+        st.session_state.quiz_signature = signature
+        pick_quiz_word(candidate_df)
+
+    if "quiz_word_id" not in st.session_state:
+        pick_quiz_word(candidate_df)
+
+    if st.session_state.get("quiz_word_id") is None and not candidate_df.empty:
+        pick_quiz_word(candidate_df)
+
+    # 如果目前題目不在候選範圍內，換一題
+    if not candidate_df.empty and st.session_state.get("quiz_word_id") not in set(candidate_df["word_id"]):
+        pick_quiz_word(candidate_df)
+
+
+def build_quiz_candidates(filtered_df: pd.DataFrame, direction: str, include_mastered: bool) -> pd.DataFrame:
+    progress = st.session_state.progress_df.copy()
+    merged = filtered_df.merge(progress[["word_id", "c2e_level", "e2c_level"]], on="word_id", how="left")
+    merged["c2e_level"] = pd.to_numeric(merged["c2e_level"], errors="coerce").fillna(0).astype(int)
+    merged["e2c_level"] = pd.to_numeric(merged["e2c_level"], errors="coerce").fillna(0).astype(int)
+
+    if not include_mastered:
+        if direction == "c2e":
+            merged = merged[merged["c2e_level"] < 4]
+        else:
+            merged = merged[merged["e2c_level"] < 4]
+
+    return merged.reset_index(drop=True)
+
+
+def get_current_quiz_row(candidate_df: pd.DataFrame):
+    word_id = st.session_state.get("quiz_word_id")
+    matched = candidate_df[candidate_df["word_id"] == word_id]
+    if matched.empty:
+        return None
+    return matched.iloc[0]
+
+
+def show_c2e_quiz(row: pd.Series):
+    st.markdown('<div class="quiz-card">', unsafe_allow_html=True)
+    st.markdown('<div class="quiz-label">中翻英</div>', unsafe_allow_html=True)
+    st.markdown(
+        f"""
+        <div class="quiz-question">
+            <span class="quiz-pos">{escape(row['part_of_speech'])}</span>
+            <span class="quiz-chinese">{escape(row['chinese'])}</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    show_speak_button_inline(row["word"], "🔊 聽單字")
+
+    input_key = f"c2e_input_{row['word_id']}_{st.session_state.get('quiz_nonce', 0)}"
+    user_answer = st.text_input("請輸入英文", key=input_key)
+
+    col1, col2 = st.columns([1, 1])
+    with col1:
+        submit = st.button("送出答案", use_container_width=True, disabled=st.session_state.get("quiz_answered", False))
+    with col2:
+        if st.button("換一題", use_container_width=True):
+            st.session_state.force_next_question = True
+            st.rerun()
+
+    if submit:
+        correct_answer = row["word"]
+        is_correct = normalize_answer(user_answer) == normalize_answer(correct_answer)
+        update_progress(row["word_id"], "c2e", is_correct)
+        st.session_state.quiz_answered = True
+        st.session_state.quiz_result = is_correct
+        st.session_state.quiz_last_answer = user_answer
+        st.rerun()
+
+    if st.session_state.get("quiz_answered", False):
+        is_correct = st.session_state.get("quiz_result")
+        last_answer = st.session_state.get("quiz_last_answer", "")
+
+        if is_correct:
+            st.success("答對了，熟練度 +1。")
+        else:
+            st.error("答錯了，熟練度 -1。")
+
+        st.markdown(
+            f"""
+            <div class="answer-box">
+                你的答案：<span class="answer-user">{escape(last_answer)}</span><br>
+                正確答案：<span class="answer-correct">{escape(row["word"])}</span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        if st.button("下一題", use_container_width=True):
+            st.session_state.force_next_question = True
+            st.rerun()
+
+    show_status(row["word_id"])
+
+
+def show_e2c_quiz(row: pd.Series):
+    word = escape(row["word"])
+    st.markdown('<div class="quiz-card">', unsafe_allow_html=True)
+    st.markdown('<div class="quiz-label">英翻中</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="quiz-word">{word}</div>', unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    show_speak_button_inline(row["word"], "🔊 發音")
+
+    if not st.session_state.get("quiz_show_answer", False):
+        if st.button("公布答案", use_container_width=True):
+            st.session_state.quiz_show_answer = True
+            st.rerun()
+    else:
+        st.markdown(
+            f"""
+            <div class="answer-box">
+                <span class="quiz-pos">{escape(row['part_of_speech'])}</span>
+                <span class="quiz-chinese">{escape(row['chinese'])}</span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        col1, col2 = st.columns(2)
+        with col1:
+            correct_click = st.button("我答對了", use_container_width=True, disabled=st.session_state.get("quiz_answered", False))
+        with col2:
+            wrong_click = st.button("我答錯了", use_container_width=True, disabled=st.session_state.get("quiz_answered", False))
+
+        if correct_click:
+            update_progress(row["word_id"], "e2c", True)
+            st.session_state.quiz_answered = True
+            st.session_state.quiz_result = True
+            st.rerun()
+
+        if wrong_click:
+            update_progress(row["word_id"], "e2c", False)
+            st.session_state.quiz_answered = True
+            st.session_state.quiz_result = False
+            st.rerun()
+
+        if st.session_state.get("quiz_answered", False):
+            if st.session_state.get("quiz_result"):
+                st.success("已記錄：答對，熟練度 +1。")
+            else:
+                st.error("已記錄：答錯，熟練度 -1。")
+
+            if st.button("下一題", use_container_width=True):
+                st.session_state.force_next_question = True
+                st.rerun()
+
+    show_status(row["word_id"])
 
 
 # ============================================================
@@ -386,7 +778,7 @@ def show_card(row: pd.Series, index: int, total: int):
 # ============================================================
 
 st.set_page_config(
-    page_title="國中背單字系統｜第一階段",
+    page_title="國中背單字系統",
     page_icon="📘",
     layout="wide",
 )
@@ -421,30 +813,13 @@ st.markdown(
     .section-title {
         font-size: 1.18rem;
         font-weight: 800;
-        margin-top: 1rem;
-        margin-bottom: 0.45rem;
+        margin-top: 0.75rem;
+        margin-bottom: 0.42rem;
         color: #c9d0cb;
     }
 
-    .example-box {
-        border-left: 4px solid #5f8063;
-        border-radius: 8px;
-        padding: 0.52rem 0.8rem;
-        margin-bottom: 0.52rem;
-        background: var(--soft-card);
-        color: #d8ddd6;
-    }
-
-    .example-en {
-        font-size: 1.02rem;
-        font-weight: 700;
-        color: var(--en-example);
-    }
-
-    .example-zh {
-        font-size: 0.95rem;
-        color: var(--zh-example);
-        margin-top: 0.2rem;
+    .compact-title {
+        margin-top: 0.35rem;
     }
 
     .status-box {
@@ -467,7 +842,76 @@ st.markdown(
         font-weight: 800;
     }
 
-    /* 左側多選標籤：低彩度灰綠，避免紅色刺激 */
+    .status-count {
+        color: #8f9694;
+        font-size: 0.86rem;
+        margin-left: 0.7rem;
+    }
+
+    .quiz-card {
+        border: 1px solid #435143;
+        border-radius: 14px;
+        padding: 0.95rem 1.05rem;
+        background: #222821;
+        color: #d8ddd6;
+        margin-bottom: 0.65rem;
+    }
+
+    .quiz-label {
+        font-size: 0.95rem;
+        color: #9aa69c;
+        margin-bottom: 0.35rem;
+    }
+
+    .quiz-question {
+        font-size: 1.35rem;
+        line-height: 1.45;
+    }
+
+    .quiz-word {
+        color: #c7d8e6;
+        font-size: 2.3rem;
+        font-weight: 850;
+        line-height: 1.15;
+    }
+
+    .quiz-pos {
+        display: inline-block;
+        font-weight: 850;
+        color: #e1c27a;
+        background: #3e3420;
+        border: 1px solid #6d5b33;
+        border-radius: 7px;
+        padding: 0.08rem 0.38rem;
+        margin-right: 0.5rem;
+    }
+
+    .quiz-chinese {
+        color: #d6d2c4;
+        font-weight: 650;
+    }
+
+    .answer-box {
+        border: 1px solid #435143;
+        border-radius: 10px;
+        padding: 0.7rem 0.85rem;
+        background: #20261f;
+        color: #d8ddd6;
+        line-height: 1.8;
+        margin-top: 0.5rem;
+        margin-bottom: 0.6rem;
+    }
+
+    .answer-user {
+        color: #d6d2c4;
+        font-weight: 700;
+    }
+
+    .answer-correct {
+        color: #8fc4a7;
+        font-weight: 850;
+    }
+
     div[data-baseweb="tag"] {
         background-color: #3d5743 !important;
         color: #e7eee8 !important;
@@ -478,7 +922,6 @@ st.markdown(
         color: #e7eee8 !important;
     }
 
-    /* 上方按鈕文字盡量不換行 */
     div.stButton > button {
         white-space: nowrap;
     }
@@ -493,14 +936,36 @@ st.sidebar.title("📘 背單字系統")
 
 mode = st.sidebar.radio(
     "模式",
-    ["記憶模式", "測驗模式（第二階段加入）"],
+    ["記憶模式", "測驗模式"],
     index=0,
 )
 
-if mode != "記憶模式":
-    st.sidebar.warning("第一階段先完成記憶卡。測驗模式會在第二階段加入。")
+st.sidebar.divider()
+st.sidebar.subheader("學習狀況")
 
-# 年級選擇
+uploaded_progress_file = st.sidebar.file_uploader(
+    "上傳學習狀況 CSV",
+    type=["csv"],
+    help="可上傳上次下載的 progress.csv。"
+)
+
+init_or_load_progress(uploaded_progress_file, df)
+
+st.sidebar.download_button(
+    label="下載學習狀況 CSV",
+    data=progress_to_csv_bytes(st.session_state.progress_df),
+    file_name="progress.csv",
+    mime="text/csv",
+    use_container_width=True,
+)
+
+if uploaded_progress_file is None:
+    st.sidebar.caption("目前使用目前工作階段的學習狀況。")
+else:
+    st.sidebar.caption("已載入上傳的學習狀況。")
+
+st.sidebar.divider()
+
 available_grades = [g for g in GRADE_ORDER if g in set(df["grade"])]
 other_grades = sorted([g for g in df["grade"].unique() if g not in GRADE_ORDER and g])
 grade_options = available_grades + other_grades
@@ -511,18 +976,14 @@ if not grade_options:
 
 selected_grade = st.sidebar.selectbox("年級 / 階段", grade_options)
 
-# 國一先修沒有學期；國一～國三才有學期
 filtered = df[df["grade"] == selected_grade].copy()
 
+selected_semester = ""
 if selected_grade == "國一先修":
     st.sidebar.caption("國一先修不分上、下學期，直接選單元。")
 else:
-    semester_options = [
-        s for s in SEMESTER_ORDER if s in set(filtered["semester"])
-    ]
-    other_semesters = sorted(
-        [s for s in filtered["semester"].unique() if s not in SEMESTER_ORDER and s]
-    )
+    semester_options = [s for s in SEMESTER_ORDER if s in set(filtered["semester"])]
+    other_semesters = sorted([s for s in filtered["semester"].unique() if s not in SEMESTER_ORDER and s])
     semester_options = semester_options + other_semesters
 
     if not semester_options:
@@ -532,7 +993,6 @@ else:
     selected_semester = st.sidebar.selectbox("學期", semester_options)
     filtered = filtered[filtered["semester"] == selected_semester].copy()
 
-# 單元複選
 unit_options = get_unit_options(filtered)
 unit_labels = [x[0] for x in unit_options]
 label_to_unit_id = {label: unit_id for label, unit_id in unit_options}
@@ -555,16 +1015,12 @@ if not selected_unit_ids:
 
 filtered = filtered[filtered["unit_id"].isin(selected_unit_ids)].reset_index(drop=True)
 
-signature = f"{selected_grade}|{','.join(selected_unit_ids)}"
-if selected_grade != "國一先修":
-    signature += f"|{selected_semester}"
+base_signature = f"{mode}|{selected_grade}|{selected_semester}|{','.join(selected_unit_ids)}"
+reset_card_index_if_filter_changed(base_signature)
 
-reset_card_index_if_filter_changed(signature)
-
-# 主畫面
-st.markdown('<div class="main-title">國中背單字系統｜第一階段</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-title">國中背單字系統｜第三階段</div>', unsafe_allow_html=True)
 st.markdown(
-    '<div class="sub-title">目前功能：單元篩選、單字卡、例句整句發音、英文單字旁發音、上一張 / 下一張 / 隨機。</div>',
+    '<div class="sub-title">目前功能：記憶卡、例句整句發音、學習狀況上傳 / 下載、中翻英測驗、英翻中測驗。</div>',
     unsafe_allow_html=True,
 )
 
@@ -572,48 +1028,132 @@ if filtered.empty:
     st.warning("目前選擇範圍沒有單字。")
     st.stop()
 
-# 避免 index 超出範圍
-if st.session_state.card_index >= len(filtered):
-    st.session_state.card_index = 0
 
-control_cols = st.columns([1.15, 1.15, 1.05, 4.2])
+# ============================================================
+# 記憶模式
+# ============================================================
 
-with control_cols[0]:
-    if st.button("⬅ 上一張", use_container_width=True):
-        st.session_state.card_index = (st.session_state.card_index - 1) % len(filtered)
-        st.rerun()
+if mode == "記憶模式":
+    if st.session_state.card_index >= len(filtered):
+        st.session_state.card_index = 0
 
-with control_cols[1]:
-    if st.button("➡ 下一張", use_container_width=True):
-        st.session_state.card_index = (st.session_state.card_index + 1) % len(filtered)
-        st.rerun()
+    control_cols = st.columns([1.15, 1.15, 1.05, 4.2])
 
-with control_cols[2]:
-    if st.button("🎲 隨機", use_container_width=True):
-        st.session_state.card_index = random.randint(0, len(filtered) - 1)
-        st.rerun()
+    with control_cols[0]:
+        if st.button("⬅ 上一張", use_container_width=True):
+            st.session_state.card_index = (st.session_state.card_index - 1) % len(filtered)
+            st.rerun()
 
-with control_cols[3]:
-    st.caption(f"目前選擇範圍共有 {len(filtered)} 個單字")
+    with control_cols[1]:
+        if st.button("➡ 下一張", use_container_width=True):
+            st.session_state.card_index = (st.session_state.card_index + 1) % len(filtered)
+            st.rerun()
 
-current_row = filtered.iloc[st.session_state.card_index]
-show_card(current_row, st.session_state.card_index, len(filtered))
+    with control_cols[2]:
+        if st.button("🎲 隨機", use_container_width=True):
+            st.session_state.card_index = random.randint(0, len(filtered) - 1)
+            st.rerun()
 
-with st.expander("查看目前選擇範圍的單字表"):
-    st.dataframe(
-        filtered[
+    with control_cols[3]:
+        st.caption(f"目前選擇範圍共有 {len(filtered)} 個單字")
+
+    current_row = filtered.iloc[st.session_state.card_index]
+    show_memory_card(current_row, st.session_state.card_index, len(filtered))
+
+    with st.expander("查看目前選擇範圍的單字表"):
+        st.dataframe(
+            filtered[
+                [
+                    "word_id",
+                    "grade",
+                    "semester",
+                    "unit_id",
+                    "unit_name",
+                    "word_order",
+                    "word",
+                    "part_of_speech",
+                    "chinese",
+                ]
+            ],
+            use_container_width=True,
+            hide_index=True,
+        )
+
+
+# ============================================================
+# 測驗模式
+# ============================================================
+
+else:
+    st.sidebar.divider()
+    st.sidebar.subheader("測驗設定")
+
+    quiz_direction_label = st.sidebar.radio(
+        "測驗方向",
+        ["中翻英", "英翻中"],
+        index=0,
+    )
+
+    include_mastered = st.sidebar.checkbox(
+        "精熟單字也列入出題",
+        value=False,
+    )
+
+    direction = "c2e" if quiz_direction_label == "中翻英" else "e2c"
+
+    candidate_df = build_quiz_candidates(filtered, direction, include_mastered)
+
+    quiz_signature = (
+        f"{base_signature}|{direction}|include_mastered={include_mastered}|"
+        f"candidate_count={len(candidate_df)}"
+    )
+
+    # 使用者按「換一題」或「下一題」時，先換題
+    if st.session_state.get("force_next_question", False):
+        st.session_state.force_next_question = False
+        pick_quiz_word(candidate_df)
+
+    ensure_quiz_word(candidate_df, quiz_signature)
+
+    st.caption(
+        f"目前測驗範圍：{len(filtered)} 個單字；"
+        f"可出題：{len(candidate_df)} 個。"
+        + (" 已包含精熟單字。" if include_mastered else " 精熟單字預設不出題。")
+    )
+
+    if candidate_df.empty:
+        st.success("目前沒有可出題單字。可以勾選「精熟單字也列入出題」，或改選其他單元。")
+        st.stop()
+
+    current_quiz_row = get_current_quiz_row(candidate_df)
+
+    if current_quiz_row is None:
+        pick_quiz_word(candidate_df)
+        current_quiz_row = get_current_quiz_row(candidate_df)
+
+    if current_quiz_row is None:
+        st.warning("暫時找不到題目，請重新整理頁面。")
+        st.stop()
+
+    if direction == "c2e":
+        show_c2e_quiz(current_quiz_row)
+    else:
+        show_e2c_quiz(current_quiz_row)
+
+    with st.expander("查看目前測驗範圍的單字表"):
+        display_df = candidate_df[
             [
                 "word_id",
-                "grade",
-                "semester",
                 "unit_id",
-                "unit_name",
                 "word_order",
                 "word",
                 "part_of_speech",
                 "chinese",
+                "c2e_level",
+                "e2c_level",
             ]
-        ],
-        use_container_width=True,
-        hide_index=True,
-    )
+        ].copy()
+        display_df["中翻英"] = display_df["c2e_level"].apply(level_text)
+        display_df["英翻中"] = display_df["e2c_level"].apply(level_text)
+        display_df = display_df.drop(columns=["c2e_level", "e2c_level"])
+        st.dataframe(display_df, use_container_width=True, hide_index=True)
