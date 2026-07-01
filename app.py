@@ -261,24 +261,112 @@ def show_card(row: pd.Series, index: int, total: int):
 
     st.markdown('<div class="section-title">例句</div>', unsafe_allow_html=True)
 
-    has_example = False
+    examples = []
     for i in range(1, 4):
-        en = escape(row.get(f"example_{i}_en", ""))
-        zh = escape(row.get(f"example_{i}_zh", ""))
+        en_raw = row.get(f"example_{i}_en", "")
+        zh_raw = row.get(f"example_{i}_zh", "")
 
-        if en or zh:
-            has_example = True
-            st.markdown(
-                f"""
-                <div class="example-box">
-                    <div class="example-en">{en}</div>
-                    <div class="example-zh">{zh}</div>
+        if en_raw or zh_raw:
+            examples.append({
+                "en_raw": en_raw,
+                "en": escape(en_raw),
+                "zh": escape(zh_raw),
+            })
+
+    if examples:
+        example_items_html = ""
+        for ex in examples:
+            en_json = json.dumps(ex["en_raw"], ensure_ascii=False)
+            example_items_html += f"""
+            <div class="example-box">
+                <div class="example-row">
+                    <button class="example-speak-button" onclick='speakExample({en_json})'>🔊</button>
+                    <div class="example-text">
+                        <div class="example-en">{ex["en"]}</div>
+                        <div class="example-zh">{ex["zh"]}</div>
+                    </div>
                 </div>
-                """,
-                unsafe_allow_html=True,
-            )
+            </div>
+            """
 
-    if not has_example:
+        examples_height = 88 * len(examples) + 12
+
+        examples_html = f"""
+        <div class="examples-wrap">
+            {example_items_html}
+        </div>
+
+        <script>
+        function speakExample(text) {{
+            window.speechSynthesis.cancel();
+            const msg = new SpeechSynthesisUtterance(text);
+            msg.lang = "en-US";
+            msg.rate = 0.82;
+            msg.pitch = 1.0;
+            window.speechSynthesis.speak(msg);
+        }}
+        </script>
+
+        <style>
+        body {{
+            margin: 0;
+            background: transparent;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        }}
+        .examples-wrap {{
+            width: 100%;
+            box-sizing: border-box;
+        }}
+        .example-box {{
+            box-sizing: border-box;
+            width: 100%;
+            border-left: 4px solid #5f8063;
+            border-radius: 8px;
+            padding: 0.48rem 0.72rem;
+            margin-bottom: 0.52rem;
+            background: #222821;
+            color: #d8ddd6;
+        }}
+        .example-row {{
+            display: flex;
+            align-items: flex-start;
+            gap: 0.62rem;
+        }}
+        .example-speak-button {{
+            flex: 0 0 auto;
+            margin-top: 0.02rem;
+            font-size: 0.92rem;
+            font-weight: 700;
+            line-height: 1;
+            padding: 0.34rem 0.43rem;
+            border-radius: 9px;
+            border: 1px solid #5b725b;
+            cursor: pointer;
+            background: #314336;
+            color: #dce8de;
+        }}
+        .example-speak-button:hover {{
+            background: #3a4f40;
+        }}
+        .example-text {{
+            min-width: 0;
+        }}
+        .example-en {{
+            font-size: 1.02rem;
+            font-weight: 700;
+            color: #a8c7d8;
+            line-height: 1.35;
+        }}
+        .example-zh {{
+            font-size: 0.95rem;
+            color: #b9c3b7;
+            margin-top: 0.18rem;
+            line-height: 1.35;
+        }}
+        </style>
+        """
+        components.html(examples_html, height=examples_height)
+    else:
         st.info("這個單字目前還沒有例句。")
 
     st.markdown('<div class="section-title">記憶狀況</div>', unsafe_allow_html=True)
@@ -476,7 +564,7 @@ reset_card_index_if_filter_changed(signature)
 # 主畫面
 st.markdown('<div class="main-title">國中背單字系統｜第一階段</div>', unsafe_allow_html=True)
 st.markdown(
-    '<div class="sub-title">目前功能：單元篩選、單字卡、例句、英文單字旁發音、上一張 / 下一張 / 隨機。</div>',
+    '<div class="sub-title">目前功能：單元篩選、單字卡、例句整句發音、英文單字旁發音、上一張 / 下一張 / 隨機。</div>',
     unsafe_allow_html=True,
 )
 
