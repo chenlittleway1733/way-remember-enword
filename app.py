@@ -633,11 +633,64 @@ def ensure_quiz_word(candidate_df: pd.DataFrame, signature: str):
         pick_quiz_word(candidate_df)
 
 
-def build_quiz_candidates(filtered_df: pd.DataFrame, direction: str, include_mastered: bool) -> pd.DataFrame:
+
+def attach_progress(filtered_df: pd.DataFrame) -> pd.DataFrame:
+    """把目前選擇範圍的單字表接上學習狀況。"""
     progress = st.session_state.progress_df.copy()
-    merged = filtered_df.merge(progress[["word_id", "c2e_level", "e2c_level"]], on="word_id", how="left")
+    merged = filtered_df.merge(
+        progress[["word_id", "c2e_level", "e2c_level"]],
+        on="word_id",
+        how="left",
+    )
     merged["c2e_level"] = pd.to_numeric(merged["c2e_level"], errors="coerce").fillna(0).astype(int)
     merged["e2c_level"] = pd.to_numeric(merged["e2c_level"], errors="coerce").fillna(0).astype(int)
+    merged["both_mastered"] = (merged["c2e_level"] >= 4) & (merged["e2c_level"] >= 4)
+    return merged
+
+
+def build_memory_cards(filtered_df: pd.DataFrame, hide_mastered_cards: bool) -> pd.DataFrame:
+    """
+    記憶卡模式用。
+    hide_mastered_cards=True 時，隱藏中翻英與英翻中都達精熟的單字。
+    """
+    merged = attach_progress(filtered_df)
+    if hide_mastered_cards:
+        merged = merged[~merged["both_mastered"]]
+    return merged.reset_index(drop=True)
+
+
+def level_count_text(series: pd.Series) -> str:
+    """產生熟練度統計文字，順序由精熟到未記憶。"""
+    series = pd.to_numeric(series, errors="coerce").fillna(0).astype(int)
+    counts = series.value_counts().to_dict()
+    order = [4, 3, 2, 1, 0]
+    return "｜".join([f"{LEVEL_LABELS[level]} {int(counts.get(level, 0))}" for level in order])
+
+
+def show_range_progress_summary(filtered_df: pd.DataFrame):
+    """顯示目前選擇範圍的學習狀況統計。"""
+    merged = attach_progress(filtered_df)
+
+    c2e_summary = level_count_text(merged["c2e_level"])
+    e2c_summary = level_count_text(merged["e2c_level"])
+    both_mastered = int(merged["both_mastered"].sum())
+
+    st.markdown(
+        f"""
+        <div class="range-summary">
+            <div><span class="range-title">目前學習狀況</span></div>
+            <div><span class="status-c2e">中翻英</span>：{c2e_summary}</div>
+            <div><span class="status-e2c">英翻中</span>：{e2c_summary}</div>
+            <div><span class="range-note">雙向都精熟：{both_mastered} 個</span></div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+
+def build_quiz_candidates(filtered_df: pd.DataFrame, direction: str, include_mastered: bool) -> pd.DataFrame:
+    merged = attach_progress(filtered_df)
 
     if not include_mastered:
         if direction == "c2e":
@@ -848,6 +901,28 @@ st.markdown(
         margin-left: 0.7rem;
     }
 
+    .range-summary {
+        border: 1px solid #314033;
+        border-radius: 10px;
+        padding: 0.58rem 0.8rem;
+        background: #1c221c;
+        color: #c9d0cb;
+        font-size: 0.92rem;
+        line-height: 1.7;
+        margin-top: 0.35rem;
+        margin-bottom: 0.65rem;
+    }
+
+    .range-title {
+        color: #c9d0cb;
+        font-weight: 850;
+    }
+
+    .range-note {
+        color: #8f9694;
+        font-size: 0.86rem;
+    }
+
     .quiz-card {
         border: 1px solid #435143;
         border-radius: 14px;
@@ -1020,7 +1095,7 @@ reset_card_index_if_filter_changed(base_signature)
 
 st.markdown('<div class="main-title">國中背單字系統｜第三階段</div>', unsafe_allow_html=True)
 st.markdown(
-    '<div class="sub-title">目前功能：記憶卡、例句整句發音、學習狀況上傳 / 下載、中翻英測驗、英翻中測驗。</div>',
+    '<div class="sub-title">目前功能：記憶卡、熟練度統計、精熟字卡隱藏、學習狀況上傳 / 下載、中翻英與英翻中測驗。</div>',
     unsafe_allow_html=True,
 )
 
@@ -1034,35 +1109,56 @@ if filtered.empty:
 # ============================================================
 
 if mode == "記憶模式":
-    if st.session_state.card_index >= len(filtered):
+    st.sidebar.divider()
+    st.sidebar.subheader("記憶卡設定")
+    hide_mastered_cards = st.sidebar.checkbox(
+        "精熟字卡不顯示",
+        value=False,
+        help="隱藏中翻英與英翻中都已達精熟的單字。"
+    )
+
+    memory_df = build_memory_cards(filtered, hide_mastered_cards)
+
+    if memory_df.empty:
+        show_range_progress_summary(filtered)
+        st.success("目前沒有可顯示的字卡。若要查看精熟字卡，請取消勾選「精熟字卡不顯示」。")
+        st.stop()
+
+    if st.session_state.card_index >= len(memory_df):
         st.session_state.card_index = 0
 
     control_cols = st.columns([1.15, 1.15, 1.05, 4.2])
 
     with control_cols[0]:
         if st.button("⬅ 上一張", use_container_width=True):
-            st.session_state.card_index = (st.session_state.card_index - 1) % len(filtered)
+            st.session_state.card_index = (st.session_state.card_index - 1) % len(memory_df)
             st.rerun()
 
     with control_cols[1]:
         if st.button("➡ 下一張", use_container_width=True):
-            st.session_state.card_index = (st.session_state.card_index + 1) % len(filtered)
+            st.session_state.card_index = (st.session_state.card_index + 1) % len(memory_df)
             st.rerun()
 
     with control_cols[2]:
         if st.button("🎲 隨機", use_container_width=True):
-            st.session_state.card_index = random.randint(0, len(filtered) - 1)
+            st.session_state.card_index = random.randint(0, len(memory_df) - 1)
             st.rerun()
 
     with control_cols[3]:
-        st.caption(f"目前選擇範圍共有 {len(filtered)} 個單字")
+        if hide_mastered_cards:
+            hidden_count = len(filtered) - len(memory_df)
+            st.caption(f"目前選擇範圍共有 {len(filtered)} 個單字；已隱藏雙向精熟 {hidden_count} 個；顯示 {len(memory_df)} 個")
+        else:
+            st.caption(f"目前選擇範圍共有 {len(filtered)} 個單字；顯示 {len(memory_df)} 個")
 
-    current_row = filtered.iloc[st.session_state.card_index]
-    show_memory_card(current_row, st.session_state.card_index, len(filtered))
+    show_range_progress_summary(filtered)
+
+    current_row = memory_df.iloc[st.session_state.card_index]
+    show_memory_card(current_row, st.session_state.card_index, len(memory_df))
 
     with st.expander("查看目前選擇範圍的單字表"):
         st.dataframe(
-            filtered[
+            memory_df[
                 [
                     "word_id",
                     "grade",
@@ -1073,8 +1169,13 @@ if mode == "記憶模式":
                     "word",
                     "part_of_speech",
                     "chinese",
+                    "c2e_level",
+                    "e2c_level",
                 ]
-            ],
+            ].assign(
+                中翻英=lambda x: x["c2e_level"].apply(level_text),
+                英翻中=lambda x: x["e2c_level"].apply(level_text),
+            ).drop(columns=["c2e_level", "e2c_level"]),
             use_container_width=True,
             hide_index=True,
         )
