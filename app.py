@@ -1,6 +1,7 @@
 import json
 import random
 from pathlib import Path
+from html import escape
 
 import pandas as pd
 import streamlit as st
@@ -158,28 +159,105 @@ def reset_card_index_if_filter_changed(signature: str):
 
 def show_card(row: pd.Series, index: int, total: int):
     """顯示右側單字卡。"""
-    st.markdown(
-        f"""
-        <div class="card">
-            <div class="card-small">第 {index + 1} / {total} 張</div>
-            <div class="word-title">{row['word']}</div>
-            <div class="meaning-line">
-                <span class="pos">{row['part_of_speech']}</span>
-                <span>{row['chinese']}</span>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    word_raw = row["word"]
+    word = escape(word_raw)
+    pos = escape(row["part_of_speech"])
+    chinese = escape(row["chinese"])
+    word_json = json.dumps(word_raw, ensure_ascii=False)
 
-    speak_button(row["word"])
+    # 用 components.html 做單字卡，才能把瀏覽器 TTS 按鈕放在英文單字右邊。
+    card_html = f"""
+    <div class="card">
+        <div class="card-small">第 {index + 1} / {total} 張</div>
+
+        <div class="word-row">
+            <div class="word-title">{word}</div>
+            <button class="speak-button" onclick="speakWord()">🔊 發音</button>
+        </div>
+
+        <div class="meaning-line">
+            <span class="pos">{pos}</span>
+            <span>{chinese}</span>
+        </div>
+    </div>
+
+    <script>
+    function speakWord() {{
+        const text = {word_json};
+        window.speechSynthesis.cancel();
+        const msg = new SpeechSynthesisUtterance(text);
+        msg.lang = "en-US";
+        msg.rate = 0.85;
+        msg.pitch = 1.0;
+        window.speechSynthesis.speak(msg);
+    }}
+    </script>
+
+    <style>
+    body {{
+        margin: 0;
+        background: transparent;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }}
+    .card {{
+        box-sizing: border-box;
+        width: 100%;
+        border: 1px solid #e2e2e2;
+        border-radius: 14px;
+        padding: 0.9rem 1.2rem;
+        background: #ffffff;
+        color: #111111;
+    }}
+    .card-small {{
+        color: #777777;
+        font-size: 0.95rem;
+        margin-bottom: 0.45rem;
+    }}
+    .word-row {{
+        display: flex;
+        align-items: center;
+        gap: 0.8rem;
+        flex-wrap: wrap;
+    }}
+    .word-title {{
+        color: #111111;
+        font-size: 2.35rem;
+        font-weight: 800;
+        line-height: 1.12;
+    }}
+    .speak-button {{
+        font-size: 1rem;
+        font-weight: 650;
+        padding: 0.35rem 0.75rem;
+        border-radius: 10px;
+        border: 1px solid #cfcfcf;
+        cursor: pointer;
+        background: #f8f8f8;
+        color: #111111;
+    }}
+    .speak-button:hover {{
+        background: #eeeeee;
+    }}
+    .meaning-line {{
+        color: #222222;
+        font-size: 1.15rem;
+        margin-top: 0.55rem;
+    }}
+    .pos {{
+        font-weight: 800;
+        margin-right: 0.5rem;
+    }}
+    </style>
+    """
+
+    components.html(card_html, height=150)
 
     st.markdown("### 例句")
 
     has_example = False
     for i in range(1, 4):
-        en = row.get(f"example_{i}_en", "")
-        zh = row.get(f"example_{i}_zh", "")
+        en = escape(row.get(f"example_{i}_en", ""))
+        zh = escape(row.get(f"example_{i}_zh", ""))
 
         if en or zh:
             has_example = True
@@ -230,52 +308,30 @@ st.markdown(
         color: #666;
         margin-bottom: 1rem;
     }
-    .card {
-        border: 1px solid #e6e6e6;
-        border-radius: 16px;
-        padding: 1.4rem 1.6rem;
-        margin-bottom: 0.8rem;
-        background: #fafafa;
-    }
-    .card-small {
-        color: #777;
-        font-size: 0.95rem;
-        margin-bottom: 0.4rem;
-    }
-    .word-title {
-        font-size: 3.2rem;
-        font-weight: 800;
-        line-height: 1.1;
-    }
-    .meaning-line {
-        font-size: 1.35rem;
-        margin-top: 0.8rem;
-    }
-    .pos {
-        font-weight: 700;
-        margin-right: 0.5rem;
-    }
     .example-box {
         border-left: 5px solid #ddd;
-        padding: 0.65rem 0.9rem;
-        margin-bottom: 0.65rem;
+        padding: 0.55rem 0.8rem;
+        margin-bottom: 0.55rem;
         background: #ffffff;
+        color: #111111;
     }
     .example-en {
-        font-size: 1.12rem;
+        font-size: 1.05rem;
         font-weight: 650;
+        color: #111111;
     }
     .example-zh {
-        font-size: 1.02rem;
-        color: #555;
-        margin-top: 0.25rem;
+        font-size: 0.98rem;
+        color: #555555;
+        margin-top: 0.2rem;
     }
     .status-box {
         border: 1px dashed #cfcfcf;
-        border-radius: 12px;
-        padding: 0.8rem 1rem;
-        background: #fff;
-        font-size: 1.05rem;
+        border-radius: 10px;
+        padding: 0.6rem 0.85rem;
+        background: #ffffff;
+        color: #111111;
+        font-size: 1rem;
     }
     </style>
     """,
@@ -359,7 +415,7 @@ reset_card_index_if_filter_changed(signature)
 # 主畫面
 st.markdown('<div class="main-title">國中背單字系統｜第一階段</div>', unsafe_allow_html=True)
 st.markdown(
-    '<div class="sub-title">目前功能：單元篩選、單字卡、例句、瀏覽器 TTS 發音、上一張 / 下一張 / 隨機。</div>',
+    '<div class="sub-title">目前功能：單元篩選、單字卡、例句、英文單字旁發音、上一張 / 下一張 / 隨機。</div>',
     unsafe_allow_html=True,
 )
 
